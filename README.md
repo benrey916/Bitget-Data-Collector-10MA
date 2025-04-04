@@ -1,6 +1,6 @@
-# **AI Trading Bot Data Collector | Binance Crypto Price**  
+# **AI Trading Bot Data Collector | Bitget Crypto Price**  
 
-This project is a **cryptocurrency price data collector** that fetches **historical and live market data** from the Binance API and stores it in a **MongoDB time-series database**. The system ensures a continuous, up-to-date record of key trading pairs while maintaining a rolling history of **15,000 records per token**.
+This project is a **cryptocurrency price data collector** that fetches **historical and live market data** from the Bitget API and stores it in a **MongoDB time-series database**. The system ensures a continuous, up-to-date record of key trading pairs while maintaining a rolling history of **15,000 records per token**.
 
 ![AI Trading](https://images.pexels.com/photos/6802042/pexels-photo-6802042.jpeg)
 
