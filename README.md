@@ -1,26 +1,108 @@
-# **AI Trading Bot Data Collector | Bitget Crypto Price**  
+# Crypto Price Data Collector || Bitget API
 
-This project is a **cryptocurrency price data collector** that fetches **historical and live market data** from the Bitget API and stores it in a **MongoDB time-series database**. The system ensures a continuous, up-to-date record of key trading pairs while maintaining a rolling history of **15,000 records per token**.
+A Python script that collects and stores cryptocurrency price data from the Bitget API into MongoDB time-series collections. This tool is designed to maintain a rolling window of the latest 3,000 records for specified trading pairs.
 
-![AI Trading](https://images.pexels.com/photos/6802042/pexels-photo-6802042.jpeg)
+## Features
 
-## **Features**  
-- **Fetches live price data** for BTC, ETH, SOL, XRP, and ADA at **1-minute intervals**.  
-- **Stores data in MongoDB** using **time-series collections** for efficient querying.  
-- **Maintains a rolling window** of the most recent **15,000 records per token**.  
-- **Fills historical data gaps** to ensure complete time-series consistency.  
-- **Auto-retries on API failures** to improve data reliability.  
+- **Historical Data Fetching**: Initial bulk fetch of up to 3,000 historical candlestick records per token.
+- **Time-Series Collections**: Utilizes MongoDB time-series collections for efficient storage and querying.
+- **Gap Filling**: Detects and fills missing data between the last recorded entry and the current time.
+- **Live Updates**: Continuously fetches new data at the start of each minute.
+- **Duplicate Prevention**: Checks for existing timestamps to avoid redundant data.
+- **Automatic Cleanup**: Ensures only the latest 3,000 records are retained per token.
 
-## **How It Works**  
-1. **Initial Data Fetch**: Collects up to 15,000 historical records per token.  
-2. **Gap Filling**: Detects and fills missing data points to maintain a complete time series.  
-3. **Live Updates**: Fetches and stores new price data at each minute mark.  
-4. **Data Pruning**: Ensures only the latest 15,000 records per token are kept.  
+## Supported Tokens & Intervals
+- **Tokens**: `ETHUSDT`, `ADAUSDT` (configurable).
+- **Interval**: 1-minute candlesticks.
 
-## **Setup & Usage**  
-- Clone the repository  
-- Install dependencies (`requests`, `pymongo`)  
-- Set up a **MongoDB Atlas database**  
-- Run the script to start collecting data  
+## Prerequisites
 
-This project is useful for **crypto traders, analysts, and developers** looking to maintain a structured and efficient historical price database for further analysis or algorithmic trading. 🚀  
+- Python 3.8+
+- MongoDB Atlas cluster (or local MongoDB instance with time-series support).
+- Python Libraries: 
+  ```bash
+  pip install requests pymongo python-dotenv
+  ```
+
+## Configuration
+
+1. **MongoDB Connection**:
+   - Replace the `MONGODB_URI` in the script with your MongoDB connection string.
+   - Format: `mongodb+srv://<username>:<password>@cluster0.iittg.mongodb.net/alert3`.
+
+2. **Script Parameters** (Modify in Code):
+   ```python
+   TOKENS = ["ETHUSDT", "ADAUSDT"]  # Add/remove trading pairs
+   INTERVAL = "1min"                 # Supported: 1min, 5min, 15min, etc. (check Bitget API)
+   LIMIT = 200                       # Max records per API request (do not exceed API limits)
+   TOTAL_RECORDS = 3000              # Records to retain per token
+   SLEEP_TIME = 2                    # Seconds between API requests to avoid rate limits
+   ```
+
+## Installation
+
+1. **Clone the Repository**:
+   ```bash
+   git clone https://github.com/yourusername/crypto-data-collector.git
+   cd crypto-data-collector
+   ```
+
+2. **Install Dependencies**:
+   ```bash
+   pip install -r requirements.txt  # Create a requirements.txt with the libraries
+   ```
+
+## Usage
+
+### Step 1: Run the Script
+```bash
+python data_collector.py
+```
+
+### Workflow
+1. **MongoDB Connection Check**: Verifies connectivity to your database.
+2. **Create Time-Series Collections**: If they don't exist.
+3. **Fetch Initial Data**: Populates up to 3,000 historical records per token.
+4. **Fill Gaps**: Ensures no missing data between the oldest record and the current time.
+5. **Live Updates**: Runs indefinitely, fetching new data every minute.
+
+## Database Structure
+Each token has a dedicated time-series collection named `<TOKEN>_timeseries` (e.g., `ETHUSDT_timeseries`). Documents include:
+```javascript
+{
+  "token": "ETHUSDT",           // Trading pair
+  "timestamp": ISODate("2023-10-01T00:00:00Z"),  // UTC time
+  "open": 1700.5,               // Opening price
+  "high": 1712.3,               // Highest price during the interval
+  "low": 1698.2,                // Lowest price
+  "close": 1705.7,              // Closing price
+  "base_volume": 450.2,         // Volume in the base currency (e.g., ETH)
+  "quote_volume": 765432.1      // Volume in the quote currency (e.g., USDT)
+}
+```
+
+## Troubleshooting
+
+- **Connection Errors**:
+  - Ensure the MongoDB URI is correct and whitelisted in Atlas.
+  - Check network connectivity.
+
+- **No Data Fetched**:
+  - Verify the token symbols match Bitget's supported pairs.
+  - Check Bitget API status for outages.
+
+- **Gap Filling Issues**:
+  - The loop condition in `fill_gaps()` may contain a bug. Replace `&` with `and`:
+    ```python
+    while fetched < total_minutes and total_minutes > 0:
+    ```
+
+- **Rate Limits**:
+  - Increase `SLEEP_TIME` if encountering HTTP 429 errors.
+
+## License
+MIT License. Replace with your preferred license.
+
+---
+
+**Note**: Avoid committing sensitive data (e.g., MongoDB credentials). Use environment variables in production.
