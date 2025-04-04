@@ -1,6 +1,6 @@
 # Crypto Price Data Collector || Bitget API
 
-A Python script that collects and stores cryptocurrency price data from the Bitget API into MongoDB time-series collections. This tool is designed to maintain a rolling window of the latest 3,000 records for specified trading pairs.
+A Python script that collects and stores cryptocurrency price data from the Bitget API into MongoDB time-series collections. This tool is designed to maintain a rolling window of the latest 3,000 or UNLIMITED records for specified trading pairs.
 
 ## Features
 
