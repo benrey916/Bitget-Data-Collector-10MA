@@ -9,14 +9,14 @@ MONGODB_URI = "mongodb+srv://alertdb:NzRoML9MhR3sSKjM@cluster0.iittg.mongodb.net
 client = MongoClient(MONGODB_URI)
 db = client["alert3"]
 
-# Binance API Endpoint for Klines
-BINANCE_URL = "https://api.binance.com/api/v3/klines"
+# Bitget API Endpoint for Klines
+BITGET_URL = "https://api.bitget.com/api/v2/spot/market/history-candles"
 
 # Parameters
-TOKENS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT"]
-INTERVAL = "1m"
-LIMIT = 1000  # Max per request
-TOTAL_RECORDS = 15000  # Maintain only the latest 15K records per token
+TOKENS = ["ETHUSDT", "ADAUSDT"]
+INTERVAL = "1min"
+LIMIT = 200  # Max per request
+TOTAL_RECORDS = 3000  # Maintain only the latest 3K records per token
 SLEEP_TIME = 2  # Sleep to avoid rate limits
 
 def create_time_series_collection():
@@ -30,13 +30,18 @@ def create_time_series_collection():
             )
             print(f"Created time series collection: {collection_name}")
 
-def fetch_price_data(symbol, start_time, end_time):
-    """Fetch historical price data within given start and end times."""
-    params = {"symbol": symbol, "interval": INTERVAL, "limit": LIMIT, "startTime": start_time, "endTime": end_time}
+def fetch_price_data(symbol, end_time, limit):
+    """Fetch historical price data within given end time"""
+    params = {
+        "symbol": symbol,
+        "granularity": INTERVAL,
+        "endTime": end_time,
+        "limit": limit
+    }
     try:
-        response = requests.get(BINANCE_URL, params=params)
+        response = requests.get(BITGET_URL, params=params)
         response.raise_for_status()
-        data = response.json()
+        data = response.json()["data"]
         return data if isinstance(data, list) else []
     except requests.exceptions.RequestException as e:
         print(f"Error fetching data for {symbol}: {e}")
@@ -50,40 +55,41 @@ def save_to_mongodb(collection, data, token):
     records = [
         {
             "token": token,
-            "timestamp": datetime.fromtimestamp(entry[0] / 1000, timezone.utc),
+            "timestamp": datetime.fromtimestamp(int(entry[0]) / 1000, timezone.utc),
             "open": float(entry[1]),
             "high": float(entry[2]),
             "low": float(entry[3]),
             "close": float(entry[4]),
-            "volume": float(entry[5]),
-            "close_time": datetime.fromtimestamp(entry[6] / 1000, timezone.utc),
-            "quote_asset_volume": float(entry[7]),
-            "num_trades": entry[8],
-            "taker_buy_base_asset_volume": float(entry[9]),
-            "taker_buy_quote_asset_volume": float(entry[10]),
-            "ignore": entry[11]
+            "base_volume": float(entry[5]),
+            "quote_volume": float(entry[6]),
         }
         for entry in data
     ]
     
     if records:
-        collection.insert_many(records)
-        print(f"Saved {len(records)} records to {collection.name}")
-        delete_oldest_records(collection)
+        # Avoid duplicates
+        existing_timestamps = {doc["timestamp"] for doc in collection.find({"token": token}, {"timestamp": 1})}
+        filtered_records = [r for r in records if r["timestamp"] not in existing_timestamps]
+        
+        if filtered_records:
+            collection.insert_many(filtered_records)
+            print(f"Saved {len(filtered_records)} new records to {collection.name}")
+            delete_oldest_records(collection)
+        else:
+            print("No new records to save.")
 
 def delete_oldest_records(collection):
-    """Ensure only the latest 15K records are kept."""
+    """Ensure only the latest TOTAL_RECORDS are kept."""
     record_count = collection.count_documents({})
     if record_count > TOTAL_RECORDS:
         excess = record_count - TOTAL_RECORDS
-        oldest_records = collection.find({}, {"_id": 1}).sort("timestamp", 1).limit(excess)
+        oldest_records = collection.find().sort("timestamp", pymongo.ASCENDING).limit(excess)
         ids_to_delete = [record["_id"] for record in oldest_records]
-        if ids_to_delete:
-            collection.delete_many({"_id": {"$in": ids_to_delete}})
-            print(f"Deleted {excess} old records from {collection.name}")
+        collection.delete_many({"_id": {"$in": ids_to_delete}})
+        print(f"Deleted {excess} oldest records from {collection.name}")
 
 def fetch_initial_data():
-    """Fetch initial 15K records per token."""
+    """Fetch initial TOTAL_RECORDS per token."""
     for token in TOKENS:
         collection = db[f"{token}_timeseries"]
         if collection.count_documents({}) >= TOTAL_RECORDS:
@@ -95,9 +101,7 @@ def fetch_initial_data():
         retries = 0
         
         while fetched < TOTAL_RECORDS and retries < 5:
-            start_time = end_time - (LIMIT * 60 * 1000)
-            price_data = fetch_price_data(token, start_time, end_time)
-            
+            price_data = fetch_price_data(token, end_time, LIMIT)
             if not price_data:
                 print(f"No data returned for {token}, retrying...")
                 retries += 1
@@ -106,8 +110,11 @@ def fetch_initial_data():
             
             save_to_mongodb(collection, price_data, token)
             fetched += len(price_data)
-            # Move end_time to the start of the earliest fetched kline minus 1ms
-            end_time = int(price_data[0][0]) - 1
+            if price_data:
+                end_time = int(price_data[-1][0]) - 60000 * 199# Corrected line
+                print(f"end_time here is {end_time}")
+            else:
+                break
             print(f"Total records saved for {token}: {fetched}/{TOTAL_RECORDS}")
             retries = 0  # Reset retries after successful fetch
             time.sleep(SLEEP_TIME)
@@ -118,52 +125,76 @@ def fetch_initial_data():
             print(f"Stopped fetching for {token} after {retries} retries. Total fetched: {fetched}")
 
 def fill_gaps():
-    """Fill missing minute gaps from the latest timestamp to now."""
+    """Fill missing minute gaps from last record to now."""
     for token in TOKENS:
         collection = db[f"{token}_timeseries"]
-        last_record = collection.find_one({}, sort=[("timestamp", -1)])
-        gap_start = int(last_record["timestamp"].replace(tzinfo=timezone.utc).timestamp() * 1000) + 60000
+        last_record = collection.find_one(sort=[("timestamp", -1)])
+        print(f"last_record {last_record}")
+        if not last_record:
+            print(f"No records found for {token}. Skipping gap fill.")
+            continue
+        
+        last_ts = last_record["timestamp"]
+        
+        gap_start = int(last_ts.replace(tzinfo=timezone.utc).timestamp() * 1000) + 60000
+        
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
 
-        current = datetime.now(timezone.utc)
-        previous_minute = current.replace(second=0, microsecond=0)
-        gap_end = round(previous_minute.timestamp() * 1000) - 1
+        now_ms = int(now.timestamp() * 1000)
 
-        price_data = fetch_price_data(token, gap_start, gap_end)
-        print(f"length {len(price_data)}")
-        save_to_mongodb(collection, price_data, token)
+        if gap_start > now_ms:
+            print(f"No gaps to fill for {token}.")
+            continue
+        
+        total_minutes = (now_ms - gap_start) // 60000 - 1
+        print(f"total mins {total_minutes}")
+        
+        fetched = 0
+        end_time_ms = now_ms
+        
+        while fetched < total_minutes & total_minutes > 0:
+            remaining = total_minutes - fetched
+            limit = min(LIMIT, remaining)
+            price_data = fetch_price_data(token, end_time_ms - 60000, limit)
+            print(f"fill gap price_data {limit}")
+            
+            save_to_mongodb(collection, price_data, token)
+            batch_count = len(price_data)
+            fetched += batch_count
+            print(f"fetched {fetched}")
+            
+            time.sleep(SLEEP_TIME)
+        
+        print(f"Filled {fetched} minutes for {token}.")
 
 def live_update():
-    """Fetch new price data at exact minute marks and maintain record limits."""
+    """Continuously fetch new data at minute intervals."""
     while True:
-        current_time = datetime.now(timezone.utc)
-        next_minute = (current_time + timedelta(minutes=1)).replace(second=0, microsecond=0)
-        sleep_duration = (next_minute - current_time).total_seconds()
-        if sleep_duration > 0:
-            time.sleep(sleep_duration)
+        current = datetime.now(timezone.utc)
+        next_min = (current + timedelta(minutes=1)).replace(second=0, microsecond=0)
+        sleep_sec = (next_min - current).total_seconds()
+        time.sleep(max(0, sleep_sec))
         
-        # Wait an additional 5 seconds to ensure Binance data is available
-        time.sleep(5)
+        time.sleep(2)  # Wait for data availability
         
         for token in TOKENS:
             collection = db[f"{token}_timeseries"]
-            current_utc = datetime.now(timezone.utc)
-            previous_minute = current_utc.replace(second=0, microsecond=0) - timedelta(minutes=1)
-            start_time = int(previous_minute.timestamp() * 1000)
-            end_time = start_time + 60 * 1000 - 1  # Next minute
+            prev_min = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+            end_time = int(prev_min.timestamp() * 1000)
             
-            price_data = fetch_price_data(token, start_time, end_time)
+            price_data = fetch_price_data(token, end_time, 1)
             retries = 0
             while not price_data and retries < 3:
-                print(f"No data for {token} at {previous_minute}, retrying...")
+                print(f"Retrying {token} at {prev_min}...")
                 time.sleep(2)
-                price_data = fetch_price_data(token, start_time, end_time)
+                price_data = fetch_price_data(token, end_time, 1)
                 retries += 1
             
             if price_data:
                 save_to_mongodb(collection, price_data, token)
-                print(f"Updated {token} at {previous_minute}")
+                print(f"Updated {token} at {prev_min}")
             else:
-                print(f"Failed to fetch data for {token} at {previous_minute}")
+                print(f"Failed to update {token} at {prev_min}")
             
             delete_oldest_records(collection)
 
@@ -174,13 +205,13 @@ if __name__ == "__main__":
         create_time_series_collection()
         fetch_initial_data()
         
-        # Wait until the next exact minute (seconds == 0) before calling fill_gaps()
+        # Wait until next full minute
         now = datetime.now(timezone.utc)
-        wait_time = 60 - now.second  # Calculate seconds to wait
-        print(f"Waiting {wait_time} seconds for the next full minute before filling gaps...")
-        time.sleep(wait_time)  # Sleep until next full minute
+        wait_sec = 60 - now.second
+        print(f"Waiting {wait_sec} seconds to start gap filling...")
+        time.sleep(wait_sec)
         
-        fill_gaps()  # Run fill_gaps() exactly once at 00 seconds
-        live_update()  # Continue with live updates
+        fill_gaps()
+        live_update()
     except Exception as e:
         print(f"Error: {e}")
