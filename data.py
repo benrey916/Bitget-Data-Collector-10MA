@@ -5,9 +5,9 @@ from datetime import datetime, timezone, timedelta
 from pymongo import MongoClient
 
 # MongoDB Connection
-MONGODB_URI = "mongodb+srv://alertdb:NzRoML9MhR3sSKjM@cluster0.iittg.mongodb.net/alert3"
+MONGODB_URI = "mongodb+srv://alertdb:NzRoML9MhR3sSKjM@cluster0.iittg.mongodb.net/bitget10K"
 client = MongoClient(MONGODB_URI)
-db = client["alert3"]
+db = client["bitget10K"]
 
 # Bitget API Endpoint for Klines
 BITGET_URL = "https://api.bitget.com/api/v2/spot/market/history-candles"
@@ -16,7 +16,7 @@ BITGET_URL = "https://api.bitget.com/api/v2/spot/market/history-candles"
 TOKENS = ["ETHUSDT", "ADAUSDT"]
 INTERVAL = "1min"
 LIMIT = 200  # Max per request
-TOTAL_RECORDS = 3000  # Maintain only the latest 3K records per token
+TOTAL_RECORDS = 10000  # Maintain only the latest XXXX records per token
 SLEEP_TIME = 2  # Sleep to avoid rate limits
 
 def create_time_series_collection():
@@ -146,7 +146,7 @@ def fill_gaps():
             print(f"No gaps to fill for {token}.")
             continue
         
-        total_minutes = (now_ms - gap_start) // 60000 - 1
+        total_minutes = (now_ms - gap_start) // 60000
         print(f"total mins {total_minutes}")
         
         fetched = 0
@@ -155,7 +155,7 @@ def fill_gaps():
         while fetched < total_minutes & total_minutes > 0:
             remaining = total_minutes - fetched
             limit = min(LIMIT, remaining)
-            price_data = fetch_price_data(token, end_time_ms - 60000, limit)
+            price_data = fetch_price_data(token, end_time_ms, limit)
             print(f"fill gap price_data {limit}")
             
             save_to_mongodb(collection, price_data, token)
